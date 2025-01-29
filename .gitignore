@@ -1,0 +1,16 @@
+# Ignore Python bytecode files
+*.pyc
+__pycache__/
+
+# Ignore build directories
+/build/
+/dist/
+
+# Ignore logs
+*.log
+
+# others
+/AIvenv/
+/.ipynb_checkpoints/
+CANS-*/
+/transfer-learning-weights/
