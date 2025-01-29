@@ -9,8 +9,13 @@ __pycache__/
 # Ignore logs
 *.log
 
+# trained models
+*.h5
+*.tflite
+
 # others
 /AIvenv/
 /.ipynb_checkpoints/
 CANS-*/
 /transfer-learning-weights/
+/.old-stuff/

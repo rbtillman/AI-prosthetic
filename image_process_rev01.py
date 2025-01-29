@@ -1,3 +1,8 @@
+'''
+AI trainer for mobilenet transfer learning
+Copyright (c) 2025 Tillman. All Rights Reserved.
+'''
+
 import os
 import cv2
 import numpy as np

@@ -1,3 +1,7 @@
+'''
+AI trainer for mobilenet transfer learning, rev02
+Copyright (c) 2025 Tillman. All Rights Reserved.
+'''
 import time
 start_time = time.time()
 import math

@@ -1,3 +1,8 @@
+'''
+renaming script for image training data
+Copyright (c) 2025 Tillman. All Rights Reserved.
+'''
+
 import os
 
 def rename_files_in_directory(directory):

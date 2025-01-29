@@ -1,3 +1,10 @@
+'''
+GPU stress test
+Ensures tensorflow runs on GPU.  Run in WSL venv
+
+Copyright (c) 2025 Tillman. All Rights Reserved.
+'''
+
 import tensorflow as tf
 import time
 

@@ -1,3 +1,9 @@
+'''
+Serial read for images.  needs work.  
+Written R. Tillman 1.18.25
+'''
+
+
 import serial
 
 port = 'COM3'
