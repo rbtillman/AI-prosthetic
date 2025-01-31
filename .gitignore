@@ -14,7 +14,7 @@ __pycache__/
 *.tflite
 
 # others
-/AIvenv/
+/AIvenv*
 /.ipynb_checkpoints/
 CANS-*/
 /transfer-learning-weights/
