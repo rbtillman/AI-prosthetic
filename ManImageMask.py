@@ -9,7 +9,7 @@ Usage:
 - when polygon is fully drawn, press enter to proceed
 - to remove the polygon, press esc.  The polygon will clear when you start drawing a new one
 
-Requires cv2, numpy, and matplotlib.  To install, run "pip install cv2 numpy matplotlib" in terminal
+Requires cv2, numpy, and matplotlib.  To install, run "pip install opencv-python numpy matplotlib" in terminal
 
 Copyright (c) 2025 Tillman. All Rights Reserved.
 '''
@@ -30,7 +30,7 @@ if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
 def main():
-    input_directory = 'CANS-REGBATCH/batch_1'  # input images: put directory name of images here, ie, 'CANS-BATCH1' or whatever
+    input_directory = 'CANS-REGBATCH/batch_3'  # input images: put directory name of images here, ie, 'CANS-BATCH1' or whatever
     process_images_in_directory(input_directory, output_dir)
 
 # Function to calculate the angle of a line segment

@@ -19,3 +19,4 @@ __pycache__/
 CANS-*/
 /transfer-learning-weights/
 /.old-stuff/
+*.zip
