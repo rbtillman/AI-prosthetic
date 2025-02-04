@@ -1,14 +1,18 @@
 '''
 GPU stress test
-Ensures tensorflow runs on GPU.  Run in WSL venv
+Ensures tensorflow runs as expected on GPU.  Run in WSL venv
 
 Copyright (c) 2025 Tillman. All Rights Reserved.
+
+In case the venv self destructs again, reinstall dependencies with: 
+python3 -m pip install tensorflow[and-cuda] opencv-python matplotlib pyserial numpy pandas 
+
 '''
-
-import tensorflow as tf
 import time
+st1 = time.time()
+import tensorflow as tf
+print(f"\TensorFlow import completed in {(time.time()-st1)} seconds")
 
-# Check if TensorFlow detects a GPU
 gpus = tf.config.list_physical_devices('GPU')
 
 if gpus:
@@ -19,17 +23,15 @@ else:
 gpu_device = gpus[0]
 tf.config.experimental.set_memory_growth(gpu_device, True)
 
-# Define a stress test function
 def gpu_stress_test(num_iterations=1000, matrix_size=2048):
     print(f"Running stress test: {num_iterations} iterations with {matrix_size}x{matrix_size} matrices.")
     
-    # Create random matrices for multiplication
+    # random matrices for multiplication
     matrix_a = tf.random.uniform((matrix_size, matrix_size))
     matrix_b = tf.random.uniform((matrix_size, matrix_size))
     
     start_time = time.time()
     
-    # Perform matrix multiplications
     for i in range(num_iterations):
         tf.linalg.matmul(matrix_a, matrix_b)
         if (i + 1) % 100 == 0:
