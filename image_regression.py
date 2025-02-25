@@ -6,95 +6,129 @@ Copyright (c) 2025 Tillman. All Rights Reserved.
 
 import time
 start_time = time.time()
+
 import math
-import requests
+import os
+import glob
+import pandas as pd
 import tensorflow as tf
-from tensorflow.keras import Model
-from tensorflow.keras.models import Sequential
+import keras
+from tensorflow.keras import Model, Sequential
 from tensorflow.keras.layers import (
-    Dense, InputLayer, Dropout, Conv1D, Flatten, Reshape, MaxPooling1D, BatchNormalization,
-    Conv2D, GlobalMaxPooling2D, Lambda, GlobalAveragePooling2D)
-from tensorflow.keras.optimizers import Adam, Adadelta
-from tensorflow.keras.losses import categorical_crossentropy
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
-#from pathlib import Path
+    Conv2D, MaxPooling2D, Lambda, Dense, InputLayer, Dropout, Flatten, Reshape, GlobalAveragePooling2D
+)
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.losses import MeanSquaredError
+from tensorflow.keras.callbacks import ModelCheckpoint
+
+try:
+    # import feature map script if present
+    from feature_map import feature_map
+    visualize = True
+    print("Feature map script will be run following training")
+except:
+    print("No feature map script found.")
+    visualize = False
 
 load_time = time.time() - start_time
-print(f"\nlibraries import completed in{load_time}\n")
+print(f"\nLibraries imported in {load_time:.2f} seconds.\n")
 
-# Constants and paths
+# Constants
 INPUT_SHAPE = (96, 96, 1)
 BATCH_SIZE = 32
-EPOCHS = 80
-FINE_TUNE_EPOCHS = 15
+EPOCHS = 30
+FINE_TUNE_EPOCHS = 15 #15
 FINE_TUNE_PERCENTAGE = 65
-TRAIN_DIR = './CANS-DATA/TRAIN'  # Update this with your train dataset directory
-VALIDATION_DIR = './CANS-DATA/TEST'  # Update this with your validation dataset directory
 
-# Currently static, consider scheduling.  
-LEARNING_RATE = 0.0004
+# Paths to stuff
+TRAIN_DIR = './CANS-REGMASKSPLIT/TRAIN'  
+VALIDATION_DIR = './CANS-REGMASKSPLIT/TEST'  
+LABELS_CSV = './CANS-REGMASKSPLIT/angles.csv'  
+LEARNING_RATE = 0.0002 # static, consider scheduling?
 
-train_dataset = tf.keras.preprocessing.image_dataset_from_directory(
-    TRAIN_DIR,
-    image_size=(96, 96),  # Resize images to 96x96. May want to increase.  
-    batch_size=BATCH_SIZE,
-    color_mode='grayscale',  # Ensure images are grayscale
-    label_mode='categorical'
-)
+# Load CSV, create a filename-to-angle dictionary
+labels_df = pd.read_csv(LABELS_CSV, header=0, names=['filename', 'angle'])
+# print(labels_df.columns)
+label_dict = {row['filename']: row['angle'] for _, row in labels_df.iterrows()}
 
-validation_dataset = tf.keras.preprocessing.image_dataset_from_directory(
-    VALIDATION_DIR,
-    image_size=(96, 96),
-    batch_size=BATCH_SIZE,
-    color_mode='grayscale',
-    label_mode='categorical'
-)
+# print(label_dict)
 
 
-# Build the model
-model = Sequential()
-model.add(InputLayer(input_shape=INPUT_SHAPE, name='x_input'))
-last_layer_index = -3
-model.add(Model(inputs=base_model.inputs, outputs=base_model.layers[last_layer_index].output))
-model.add(Reshape((-1, model.layers[-1].output.shape[3])))
-model.add(Dense(16, activation='relu'))
-model.add(Dropout(0.4))
-model.add(Flatten())
-model.add(Dense(3, activation='softmax'))  # 3 classes (vertical, horizontal, nothing)
+## Changed to work w/ angles.csv
+def get_label(file_path):
+    filename = tf.strings.split(file_path, '/')[-1]
+    angle = labels_df.loc[labels_df['filename'] == filename.numpy().decode(), 'angle'].values
+    return tf.constant(angle[0] if len(angle) > 0 else 0.0, dtype=tf.float32)
+
+def load_dataset(directory, batch_size):
+    file_paths = glob.glob(os.path.join(directory, "*.jpg"))  # Adjust for image types
+
+    dataset = tf.data.Dataset.from_tensor_slices(file_paths)
+
+    def process_path(file_path):
+        img = tf.io.read_file(file_path)
+        img = tf.image.decode_jpeg(img, channels=1)
+        img = tf.image.resize(img, (96, 96)) / 255.0  # normalize
+        
+        label = tf.numpy_function(get_label, [file_path], tf.float32)
+        label.set_shape([])
+
+        return img, label
+
+    dataset = dataset.map(process_path).batch(batch_size)
+    return dataset
+
+
+train_dataset = load_dataset(TRAIN_DIR, BATCH_SIZE)
+validation_dataset = load_dataset(VALIDATION_DIR, BATCH_SIZE)
+
+input_layer = keras.Input(shape=INPUT_SHAPE, name='x_input')
+
+# Base CNN block
+x = Conv2D(64, (3, 3), activation='relu')(input_layer)
+x = MaxPooling2D((2, 2))(x)
+x = Conv2D(64, (3, 3), activation='relu')(x)
+x = MaxPooling2D((2, 2))(x)
+x = Conv2D(64, (3, 3), activation='relu')(x) # from 128, similar performance
+x = MaxPooling2D((2, 2))(x)
+
+# Flatten and feed into dense layers
+x = Flatten()(x)
+x = Dense(64, activation='leaky_relu')(x)
+x = Dense(16, activation='relu')(x)
+x = Dropout(0.4)(x)
+output_layer = Dense(1, activation='linear')(x)
+
+model = Model(inputs=input_layer, outputs=output_layer)
+print(model.summary())
 
 # Compile the model
 model.compile(optimizer=Adam(learning_rate=LEARNING_RATE),
-              loss=categorical_crossentropy,
-              metrics=['accuracy'])
+              loss=MeanSquaredError(),
+              metrics=['mae'])
 
-# Callbacks (optional)
+# Callbacks
 callbacks = [
-    ModelCheckpoint('best_model.h5', save_best_only=True, monitor='val_accuracy', mode='max'),
-    #EarlyStopping(patience=3, restore_best_weights=True)
+    ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min'),
 ]
 
 # Train the model
 print("Training the model...")
 model.fit(train_dataset, validation_data=validation_dataset, epochs=EPOCHS, verbose=2, callbacks=callbacks)
 
-# Fine-tuning the model
+# Fine-tuning
 print(f'Fine-tuning the model for {FINE_TUNE_EPOCHS} epochs...')
-model = tf.keras.models.load_model('best_model.h5')
+model = tf.keras.models.load_model('best_model.keras')
 
-# Unfreeze the base model layers and freeze layers before the fine-tune layer
-model_layer_count = len(model.layers)
-fine_tune_from = math.ceil(model_layer_count * ((100 - FINE_TUNE_PERCENTAGE) / 100))
-
-model.trainable = True
-for layer in model.layers[:fine_tune_from]:
-    layer.trainable = False
-
-# Recompile the model after unfreezing
+# Recompile for fine-tuning
 model.compile(optimizer=Adam(learning_rate=0.000045),
-              loss=categorical_crossentropy,
-              metrics=['accuracy'])
+              loss=MeanSquaredError(),
+              metrics=['mae'])
 
 # Continue training with fine-tuning
 model.fit(train_dataset, epochs=FINE_TUNE_EPOCHS, verbose=2, validation_data=validation_dataset, callbacks=callbacks)
 
 print("Model training and fine-tuning completed successfully.")
+
+if visualize:
+    feature_map(model, './CANS-REGMASKSPLIT/TEST/coke00003.jpg')

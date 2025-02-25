@@ -4,11 +4,11 @@ File helper for moving/renaming/etc image training data.
 Syntax:
 rename.py <input_dir> <output_dir> <mode> [<parameter>]
 
-mode can be:
+Mode can be:
 split (test/train split) with parameter train ratio
 batch (break images into groups) with parameter batch size
 
-Written for .jpg only.  should work for others with minor changes
+Written for .jpg only.  Should work for others with minor changes
 
 Copyright (c) 2025 Tillman. All Rights Reserved.
 '''
@@ -86,6 +86,7 @@ def split(directory, output_dir, train_ratio):
     os.makedirs(train_dir, exist_ok=True)
     os.makedirs(test_dir, exist_ok=True)
 
+    others = [f for f in os.listdir(directory) if not f.lower().endswith('.jpg')]
     images = [f for f in os.listdir(directory) if f.lower().endswith('.jpg')]
     random.shuffle(images)
 
@@ -100,6 +101,12 @@ def split(directory, output_dir, train_ratio):
     for img in test_images:
         src_path = os.path.join(directory, img)
         dest_path = os.path.join(test_dir, img)
+        copy_file(src_path, dest_path)
+
+    # Keeps non-.jpg files in parent folder
+    for nonimg in others:
+        src_path = os.path.join(directory, nonimg)
+        dest_path = os.path.join(output_dir, nonimg)
         copy_file(src_path, dest_path)
 
     print(f"Copied {len(train_images)} images into {train_dir}")

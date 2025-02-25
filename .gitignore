@@ -12,6 +12,7 @@ __pycache__/
 # trained models
 *.h5
 *.tflite
+*.keras
 
 # others
 /AIvenv*
@@ -20,3 +21,4 @@ CANS-*/
 /transfer-learning-weights/
 /.old-stuff/
 *.zip
+*.ipynb
