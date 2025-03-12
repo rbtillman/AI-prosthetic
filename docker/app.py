@@ -4,14 +4,7 @@ Written R. Tillman 1.28.25
 
 Updated 3.11.2025 for web app via docker
 
-Usage: 
-- put image folder in same directory as program, set input directory name in main().
-- run program
-- left click on image to place a point.  Ensure that the longest 2 segments of the polygon are the edges of the object.
-- when polygon is fully drawn, press enter to proceed
-- to remove the polygon, press esc.  The polygon will clear when you start drawing a new one
-
-Requires cv2, numpy, and matplotlib.  To install, run "pip install opencv-python numpy matplotlib" in terminal
+See ManImageMask for a simpler version that does the same thing locally
 
 Copyright (c) 2025 Tillman. All Rights Reserved.
 '''
