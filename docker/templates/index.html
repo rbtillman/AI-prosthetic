@@ -1,0 +1,25 @@
+<!--
+HTML index for image segmenting program
+3.11.25
+
+Copyright (c) 2025 Tillman. All Rights Reserved.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Image Tracing - Select Image</title>
+</head>
+<body>
+  <h1>Select an image to trace</h1>
+  <ul>
+    {% for img in images %}
+      <li><a href="{{ url_for('trace', filename=img) }}">{{ img }}</a></li>
+    {% endfor %}
+  </ul>
+  {% if images|length == 0 %}
+    <p>All images have been processed!</p>
+  {% endif %}
+</body>
+</html>

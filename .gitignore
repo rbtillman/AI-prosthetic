@@ -22,3 +22,7 @@ CANS-*/
 /.old-stuff/
 *.zip
 *.ipynb
+*.csv
+*.jpg
+*.jpeg
+

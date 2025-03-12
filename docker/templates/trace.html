@@ -1,0 +1,35 @@
+<!--
+Tracing frontend for image segmenting program
+3.11.25
+
+Copyright (c) 2025 Tillman. All Rights Reserved.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Trace Image: {{ filename }}</title>
+  <style>
+    canvas {
+      border: 1px solid black;
+    }
+  </style>
+</head>
+<body>
+  <h1>Trace Image: {{ filename }}</h1>
+  <p>Click on the image to define a polygon. When done, press "Submit Polygon".</p>
+  <canvas id="traceCanvas"></canvas>
+  <br>
+  <button onclick="resetPolygon()">Reset</button>
+  <button onclick="submitPolygon()">Submit Polygon</button>
+  <p id="result"></p>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+  <script>
+    // Pass the filename and endpoint to the JS
+    const filename = "{{ filename }}";
+    const imageUrl = "{{ url_for('input_image', filename=filename) }}";
+    initCanvas(imageUrl);
+  </script>
+</body>
+</html>
