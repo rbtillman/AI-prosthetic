@@ -21,7 +21,7 @@ app = Flask(__name__)
 
 # Directories for input images, output images, and CSV file
 INPUT_DIR = 'images'
-OUTPUT_DIR = 'CANS-REGMASK2'
+OUTPUT_DIR = '/persistent/CANS-REGMASK2' # changed to match better azure FS structure
 CSV_FILE = os.path.join(OUTPUT_DIR, 'angles.csv')
 
 if not os.path.exists(OUTPUT_DIR):
