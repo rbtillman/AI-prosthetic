@@ -1,5 +1,5 @@
 '''
-Serial read for images.  needs work.  
+Serial read for images.  needs work (a lot).  
 Written R. Tillman 1.18.25
 '''
 

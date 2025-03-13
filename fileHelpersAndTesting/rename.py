@@ -19,18 +19,18 @@ import sys
 
 # params to use if no arguments
 MODE = 'split'
-directory = 'dir1'
-output_dir = 'dir2'
+directory = './CANS-REGMASK2'  # input directory (or directory for rename)
+output_dir = './CANS-tempREGSPLIT'
 
 # if args: let args control
 if len(sys.argv) > 1:
     directory = sys.argv[1]
     output_dir = sys.argv[2]
     MODE = sys.argv[3]
+    if sys.argv[3] == 'rename':
+        print('ERROR: argument based renaming not supported.  Modify script to use this mode.')
+        exit()
 
-if sys.argv[3] == 'rename':
-    print('ERROR: argument based renaming not supported.  Modify script to use this mode.')
-    exit()
 
 def main():
     errors = False
@@ -67,7 +67,7 @@ def rename(directory):
             base_name = filename.split('.jpg')[0]  # Keeps everything before the first '.jpg'
             
             # Construct the new filename, change as nessesary but keep .jpg!
-            new_filename = 'monster' + base_name + '.jpg'
+            new_filename = '2' + 'redbull' + base_name + '.jpg'
             new_file_path = os.path.join(directory, new_filename)
 
             os.rename(file_path, new_file_path)
