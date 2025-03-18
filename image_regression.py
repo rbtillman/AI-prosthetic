@@ -1,5 +1,5 @@
 '''
-WIP NN trainer for regression on can angle.  
+NN trainer for regression on can angle.
 
 Copyright (c) 2025 Tillman. All Rights Reserved.
 '''
@@ -24,7 +24,7 @@ import csv
 from tensorflow.keras import Model, Sequential, layers, activations
 from tensorflow.keras.regularizers import l1, l2, l1_l2
 from tensorflow.keras.optimizers import Adam, Lamb, Lion
-from tensorflow.keras.losses import MeanSquaredError, Huber
+from tensorflow.keras.losses import MeanSquaredError, MeanAbsoluteError, Huber, CosineSimilarity, LogCosh
 from tensorflow.keras.callbacks import ModelCheckpoint
 
 try:
@@ -41,7 +41,7 @@ load_time = time.time() - start_time
 print(f"\nLibraries imported in {load_time:.2f} seconds.\n")
 
 ## CONSTANTS
-INPUT_SHAPE = (96, 96, 1)
+INPUT_SHAPE = (240, 240, 1) # most done w/ 96,96,1
 BATCH_SIZE = 64 # change based on available gpu memory, increased may help stabilize gradients
 EPOCHS = 30
 FINE_TUNE_EPOCHS = 10
@@ -49,17 +49,18 @@ FINE_TUNE_PERCENTAGE = 65
 
 # Paths to stuff
 PARENT_DIR = './CANS-ALLALLSPLIT'
-LEARNING_RATE = 4e-5 # started w 4e-4
+LEARNING_RATE = 4e-4 # started w 4e-4
 
-CYCLICAL = True # Enable/disable cyclical learning rate (priority 1)
+# Learning rate modifiers
+CYCLICAL = False # Enable/disable cyclical learning rate (priority 1)
 CYC_MODE = 'triangular2' # triangular, triangular2, or 
 
 SCHEDULE = False # Enable/disable schedule (priority 2, will not run if CYCLICAL == True)
 # else: reduceLRonPlateau
 
-visualize = False # Change this if you want to run a feature map following training
+VISUALIZE_FM = False # Change this if you want to run a feature map following training
 
-RANDOM_SEED = 42 # "Nothing is random" -my dad.  ensures reprocucability during training
+RANDOM_SEED = 42 # Ensures reprocucability during training
 
 ## END CONSTANTS
 
@@ -69,11 +70,6 @@ tf.random.set_seed(RANDOM_SEED)
 train_dir = os.path.join(PARENT_DIR, 'TRAIN')
 validation_dir = os.path.join(PARENT_DIR, 'TEST')
 labels_csv = os.path.join(PARENT_DIR, 'angles.csv')
-
-# Load CSV, create a filename-to-angle dictionary
-labels_df = pd.read_csv(labels_csv, header=0, names=['filename', 'angle'])
-# print(labels_df.columns)
-label_dict = {row['filename']: row['angle'] for _, row in labels_df.iterrows()}
 
 # Cyclical LR feature, may help escape local minema for GD
 class CyclicalLR(tf.keras.callbacks.Callback):
@@ -121,36 +117,11 @@ class CyclicalLR(tf.keras.callbacks.Callback):
 
 # Warmup routine for gpu, works byt doesnt work
 def warmup_gpu():
-    # Create two random tensors
     a = tf.random.uniform((1000, 1000))
     b = tf.random.uniform((1000, 1000))
     # Run a dummy matrix multiplication a few times to warm up the GPU
     for _ in range(5):
         _ = tf.matmul(a, b)
-
-# Changed to work w/ angles.csv
-def get_label(file_path):
-    filename = tf.strings.split(file_path, '/')[-1]
-    angle = labels_df.loc[labels_df['filename'] == filename.numpy().decode(), 'angle'].values
-    return tf.constant(angle[0] if len(angle) > 0 else 0.0, dtype=tf.float32)
-
-def load_dataset(directory, batch_size):
-    file_paths = glob.glob(os.path.join(directory, "*.jpg"))  # Adjust for image types
-
-    dataset = tf.data.Dataset.from_tensor_slices(file_paths)
-
-    def process_path(file_path):
-        img = tf.io.read_file(file_path)
-        img = tf.image.decode_jpeg(img, channels=1)
-        img = tf.image.resize(img, (96, 96)) / 255.0
-        
-        label = tf.numpy_function(get_label, [file_path], tf.float32)
-        label.set_shape([])
-
-        return img, label
-
-    dataset = dataset.map(process_path).batch(batch_size)
-    return dataset
 
 # logs history of model performance
 def save_model_info(model, history, lr, epochs, metrics_csv_filename = 'metrics_history.csv', summary_csv_filename = 'model_history.csv'):
@@ -342,7 +313,89 @@ class ConstantFilters:
             "wtf": wtf_layer
         }
 
+# CHANGE: Move building model to functions for model partitioning
+# Define the feature extractor model
+def build_extractor(input_shape):
+    inputs = keras.Input(shape=input_shape, name='image_input')
+
+    filters = ConstantFilters()
+    filter_layers = filters.get_layers()
+
+    conv_x = filter_layers["conv_x"](inputs)
+    conv_y = filter_layers["conv_y"](inputs)
+    edge = filter_layers["laplacian"](inputs)
+    # gabor = filter_layers["gabor"](inputs)
+    # wtf = filter_layers["wtf"](inputs)
+    LCL = LocalContrastLayer(tileGridSize=(16, 16))(inputs) # 8,8 for 96x96
+
+    # Base CNN block
+    x = layers.AutoContrast(value_range=(0,1))(inputs)
+
+    x = layers.Concatenate()([x, conv_x, conv_y, edge, LCL])
+    x = layers.AveragePooling2D((4,4))(x)
+
+    x = layers.Conv2D(64, (5, 5), kernel_initializer="he_normal", padding='same')(x) #5,5 works good on 96x96
+    x = layers.ReLU(negative_slope=0.1)(x)
+    # x = layers.SpatialDropout2D(0.2)(x)
+    # x = layers.MaxPooling2D((2, 2))(x)
+
+    x = layers.Conv2D(32, (3, 3), kernel_initializer="he_normal", padding='same')(x)
+    x = layers.ReLU(negative_slope=0.1)(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+
+    x = layers.Conv2D(128, (3, 3), padding='same')(x)
+    x = layers.ReLU(negative_slope=0.1)(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    
+    features = layers.Flatten(name='features')(x)
+
+    feature_extractor = Model(inputs, features, name='feature_extractor')
+    return feature_extractor
+
+# Define the regressor model
+def build_regressor(input_shape):
+    feature_input = keras.Input(shape=input_shape, name='feature_input')
+
+    y = layers.Dense(128, kernel_regularizer=l2(0.001))(feature_input)
+    y = layers.ReLU(negative_slope=0.1)(y)
+    y = layers.Dropout(0.4)(y)
+
+    outputs = layers.Dense(1, activation='linear')(y)
+
+    regressor = Model(feature_input, outputs, name='regressor')
+    return regressor
+
+
 def main():
+    # CHANGE: Moved these function into main() as optimization when importing from this script
+    # Load CSV, create a filename-to-angle dictionary
+    labels_df = pd.read_csv(labels_csv, header=0, names=['filename', 'angle'])
+    label_dict = {row['filename']: row['angle'] for _, row in labels_df.iterrows()}
+
+    # Changed to work w/ angles.csv
+    def get_label(file_path):
+        filename = tf.strings.split(file_path, '/')[-1]
+        angle = labels_df.loc[labels_df['filename'] == filename.numpy().decode(), 'angle'].values
+        return tf.constant(angle[0] if len(angle) > 0 else 0.0, dtype=tf.float32)
+    
+    def load_dataset(directory, batch_size):
+        file_paths = glob.glob(os.path.join(directory, "*.jpg"))  # Adjust for image types
+
+        dataset = tf.data.Dataset.from_tensor_slices(file_paths)
+
+        def process_path(file_path):
+            img = tf.io.read_file(file_path)
+            img = tf.image.decode_jpeg(img, channels=1)
+            img = tf.image.resize(img, (INPUT_SHAPE[0], INPUT_SHAPE[1])) / 255.0
+            
+            label = tf.numpy_function(get_label, [file_path], tf.float32)
+            label.set_shape([])
+
+            return img, label
+
+        dataset = dataset.map(process_path).batch(batch_size)
+        return dataset
+
 
     if SCHEDULE:
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
@@ -352,52 +405,24 @@ def main():
             staircase=True  # stepwise decay
         )
 
-    warmup_gpu()
     train_dataset = load_dataset(train_dir, BATCH_SIZE)
     validation_dataset = load_dataset(validation_dir, BATCH_SIZE)
 
 
     ## MODEL STRUCTURE:
-    input_layer = keras.Input(shape=INPUT_SHAPE, name='x_input')
+    # CHANGE: add model partitoning
+    extractor = build_extractor(INPUT_SHAPE)
+    regressor = build_regressor(extractor.output_shape[1:])
 
-    filters = ConstantFilters()
-    filter_layers = filters.get_layers()
+    # build into one full model for end-to-end training.  Possible to explore other training methods
+    inputs = keras.Input(shape=INPUT_SHAPE, name='image_input')
+    features = extractor(inputs)
+    predictions = regressor(features)
+    model = Model(inputs, predictions, name='full_model')
 
-    conv_x = filter_layers["conv_x"](input_layer)
-    conv_y = filter_layers["conv_y"](input_layer)
-    edge = filter_layers["laplacian"](input_layer)
-    # gabor = filter_layers["gabor"](input_layer)
-    # wtf = filter_layers["wtf"](input_layer)
-    LCL = LocalContrastLayer(tileGridSize=(8, 8))(input_layer)
-
-    # Base CNN block
-    x = layers.AutoContrast(value_range=(0,1))(input_layer)
-
-    x = layers.Concatenate()([x, conv_x, conv_y, edge, LCL])
-
-    x = layers.Conv2D(64, (3, 3), kernel_initializer="he_normal")(x)
-    # x = layers.BatchNormalization()(x)
-    x = layers.ReLU(max_value=None, negative_slope=0.1, threshold=0.0)(x)
-    x = layers.MaxPooling2D((2, 2))(x)
-
-    x = layers.Conv2D(32, (3, 3),kernel_initializer="he_normal")(x) # from 3,3, better
-    x = layers.ReLU(max_value=None, negative_slope=0.1, threshold=0.0)(x)
-    x = layers.MaxPooling2D((2, 2))(x)
-    
-    x = layers.Conv2D(128, (3, 3))(x) # from 64, better performance
-    x = layers.ReLU(max_value=None, negative_slope=0.1, threshold=0.0)(x)
-    x = layers.MaxPooling2D((2, 2))(x)
-    
-    # Flatten and feed into dense layers
-    x = layers.Flatten()(x)
-    x = layers.Dense(64, kernel_regularizer=l2(0.001))(x) # kernel_regularizer=l2(0.001),
-    x = layers.ReLU(max_value=None, negative_slope=0.1, threshold=0.0)(x)
-    #x = Dense(16, activation='relu')(x)
-    x = layers.Dropout(0.2)(x)
-    output_layer = layers.Dense(1, activation='linear')(x)
-
-    model = Model(inputs=input_layer, outputs=output_layer)
-    print(model.summary())
+    model.summary()
+    extractor.summary()
+    regressor.summary()
     ## END MODEL STRUCTURE
 
     # Callbacks and pass LR to optimizer
@@ -430,7 +455,7 @@ def main():
 
     # Compile the model with the selected optimizer
     model.compile(optimizer=optimizer,
-                loss=Huber(),
+                loss=LogCosh(),
                 metrics=['mae'])
 
     # Train the model
@@ -451,8 +476,11 @@ def main():
 
     print("Model training and fine-tuning completed successfully.")
 
-    if visualize:
+    if visualize and VISUALIZE_FM:
         feature_map(model, './CANS-REGMASKSPLIT/TEST/coke00003.jpg')
+
+    extractor.save('extractor.keras')
+    regressor.save('regressor.keras')
 
     save_model_info(model,trainhist,LEARNING_RATE,EPOCHS)
     save_model_info(model,tunehist,LEARNING_RATE,FINE_TUNE_EPOCHS,"tune_history.csv", "tune_models.csv")
