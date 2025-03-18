@@ -7,8 +7,11 @@ Copyright (c) 2025 Tillman. All Rights Reserved.
 """
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import tensorflow as tf
+import os
+from image_regression import LocalContrastLayer # Needed to load models w/ LCL. Probably a better way to handle this idk
 
 def main():
     import sys
@@ -22,22 +25,69 @@ def main():
     
     model = tf.keras.models.load_model(model_path)
     print(model.summary())
-    feature_map(model,img_path)
+    # feature_map(model,img_path)
+    predict(model,img_path,'./CANS-ALLALLREG/angles.csv')
 
+def load_image(image_path):
+    """
+    Loads and lightly preprocesses images 
+    """
+    img = tf.io.read_file(image_path)
+    img = tf.image.decode_jpeg(img, channels=1)
+    img = tf.image.resize(img, (240, 240)) / 255.0 # add a dynamic change for different sizes
+    img = tf.expand_dims(img, axis=0)
+    return img
 
-
-# visualize feature maps
-def feature_map(model, image_path, layer_indices=None):
-    def load_image(image_path):
-        img = tf.io.read_file(image_path)
-        img = tf.image.decode_jpeg(img, channels=1)
-        img = tf.image.resize(img, (96, 96)) / 255.0
-        img = tf.expand_dims(img, axis=0)
-        return img
-
+# ADDITION: Predicts angle and returns stuff
+def predict(model, image_path, labels_csv_path):
+    """
+    Predict the angle of a can in image
+    
+    Expected CSV format: header with columns 'filename','angle'.
+    """
     img = load_image(image_path)
+    
+    prediction = model.predict(img)
+    predicted_angle = prediction[0][0]  # assuming model output shape is (1,1)
+    
+    filename = os.path.basename(image_path)
+    
+    # Read the CSV file to find the actual angle for this filename
+    labels_df = pd.read_csv(labels_csv_path, header=0, names=['filename', 'angle'])
+    actual_angles = labels_df.loc[labels_df['filename'] == filename, 'angle'].values
+    if len(actual_angles) == 0:
+        print("No actual angle found for", filename)
+        return
+    actual_angle = actual_angles[0]
+    
+    error = abs(predicted_angle - actual_angle)
+    
+    print("Predicted Angle: {:.2f} degrees".format(predicted_angle))
+    print("Actual Angle: {:.2f} degrees".format(actual_angle))
+    print("Absolute Error: {:.2f} degrees".format(error))
 
-    conv_layers = [layer for layer in model.layers if isinstance(layer, tf.keras.layers.Conv2D)]
+    data = [predicted_angle,actual_angle,error]
+
+    print(f"\ndata\n = {data}")
+    return data
+
+def feature_map(model, image_path, layer_indices=None):
+    """
+    Visualizes feature maps.  
+
+    Adjust conv_layers with isinstance() for types of layers to show.
+    Or, provide optional layer indices.
+    """
+    img = load_image(image_path)
+    
+    # predict angle
+    prediction = model.predict(img)
+    predicted_angle = prediction[0][0]
+    print(f"Predicted Angle: {predicted_angle:.2f} degrees")
+
+    conv_layers = [layer for layer in model.layers if ( isinstance(layer,tf.keras.layers.AveragePooling2D)
+                                                       or isinstance(layer,tf.keras.layers.ReLU) 
+                                                       or isinstance(layer,tf.keras.layers.Concatenate))] # adjust for what you want to see
     
     # If layer_indices is provided, select specific layers
     if layer_indices:
@@ -59,8 +109,13 @@ def feature_map(model, image_path, layer_indices=None):
         fig, axes = plt.subplots(rows, cols, figsize=(cols * 2, rows * 2))
         axes = axes.flatten()
 
+        # ADDITION: Bug fix: check if feature map is 4D (batch, height, width, channels)
+        if len(fmap.shape) == 4:
+            fmap = fmap[0]  # Remove batch dimension if present
+
         for i in range(num_filters):
-            axes[i].imshow(fmap[0, :, :, i], cmap='viridis')
+            axes[i].imshow(fmap[:, :, i], cmap='viridis')
+            # axes[i].imshow(fmap[0, :, :, i], cmap='viridis') # old version
             axes[i].axis('off')
 
         for i in range(num_filters, len(axes)):
