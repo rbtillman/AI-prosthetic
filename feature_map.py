@@ -1,7 +1,7 @@
 """
 Creates feature maps for some CNN model
 
-Usage: python feature_map.py <path/to/model> <path/to/image>
+Usage: python feature_map.py <path/to/model> <path/to/image> <mode>
 
 Copyright (c) 2025 Tillman. All Rights Reserved.
 """
@@ -15,33 +15,44 @@ from image_regression import LocalContrastLayer # Needed to load models w/ LCL. 
 
 def main():
     import sys
-
-    if len(sys.argv) > 1:
+    # CHANGE: added <mode> argument
+    if len(sys.argv) < 4:
+        print("Usage: python feature_map.py <path/to/model> <path/to/image> <mode> <path/to/labels")
+        print("  <path/to/model>: Path to the saved model file (use \ on Windows)")
+        print("  <path/to/image>: Path to the image file to process  (use \ on Windows)")
+        print("  <mode>: 'map' to visualize feature maps or 'predict' to print predictions")
+        print("  <path/to/labels>: For predict only, path to labels file. Default option available")
+        sys.exit(1)
+    else:
         model_path = sys.argv[1]
         img_path = sys.argv[2]
-    else:
-        print('Usage: python feature_map.py <path/to/model> <path/to/image>')
-        exit()
+        mode = sys.argv[3].lower()
     
     model = tf.keras.models.load_model(model_path)
     print(model.summary())
-    # feature_map(model,img_path)
-    predict(model,img_path,'./CANS-ALLALLREG/angles.csv')
 
-def load_image(image_path):
+    if mode == "map":
+        feature_map(model,img_path)
+    elif mode == "predict":
+        try:
+            predict(model,img_path, sys.argv[4])
+        except:
+            predict(model,img_path)
+
+def load_image(image_path, image_size = (96, 96)):
     """
     Loads and lightly preprocesses images 
     """
     img = tf.io.read_file(image_path)
     img = tf.image.decode_jpeg(img, channels=1)
-    img = tf.image.resize(img, (240, 240)) / 255.0 # add a dynamic change for different sizes
+    img = tf.image.resize(img, image_size) / 255.0 # add a dynamic change for different sizes
     img = tf.expand_dims(img, axis=0)
     return img
 
-# ADDITION: Predicts angle and returns stuff
-def predict(model, image_path, labels_csv_path):
+# Predicts angle and returns stuff
+def predict(model, image_path, labels_csv_path = './CANS-ALLALLREG/angles.csv', verbose = True):
     """
-    Predict the angle of a can in image
+    Predict the angle of a can (or whatever!) in image
     
     Expected CSV format: header with columns 'filename','angle'.
     """
@@ -56,19 +67,20 @@ def predict(model, image_path, labels_csv_path):
     labels_df = pd.read_csv(labels_csv_path, header=0, names=['filename', 'angle'])
     actual_angles = labels_df.loc[labels_df['filename'] == filename, 'angle'].values
     if len(actual_angles) == 0:
-        print("No actual angle found for", filename)
+        print("Predict: WARN: No actual angle found for", filename)
         return
     actual_angle = actual_angles[0]
     
     error = abs(predicted_angle - actual_angle)
     
-    print("Predicted Angle: {:.2f} degrees".format(predicted_angle))
-    print("Actual Angle: {:.2f} degrees".format(actual_angle))
-    print("Absolute Error: {:.2f} degrees".format(error))
+    if verbose:
+        print("Predict: Predicted Angle: {:.2f} degrees".format(predicted_angle))
+        print("Predict: Actual Angle: {:.2f} degrees".format(actual_angle))
+        print("Predict: Absolute Error: {:.2f} degrees".format(error))
 
     data = [predicted_angle,actual_angle,error]
 
-    print(f"\ndata\n = {data}")
+    # print(f"\ndata\n = {data}")
     return data
 
 def feature_map(model, image_path, layer_indices=None):
@@ -79,13 +91,14 @@ def feature_map(model, image_path, layer_indices=None):
     Or, provide optional layer indices.
     """
     img = load_image(image_path)
-    
+    print(img.shape)
+
     # predict angle
     prediction = model.predict(img)
     predicted_angle = prediction[0][0]
-    print(f"Predicted Angle: {predicted_angle:.2f} degrees")
+    print(f"feature_map: Predicted Angle: {predicted_angle:.2f} degrees  (FMap)")
 
-    conv_layers = [layer for layer in model.layers if ( isinstance(layer,tf.keras.layers.AveragePooling2D)
+    conv_layers = [layer for layer in model.layers if ( isinstance(layer,tf.keras.layers.Add)
                                                        or isinstance(layer,tf.keras.layers.ReLU) 
                                                        or isinstance(layer,tf.keras.layers.Concatenate))] # adjust for what you want to see
     
@@ -109,7 +122,7 @@ def feature_map(model, image_path, layer_indices=None):
         fig, axes = plt.subplots(rows, cols, figsize=(cols * 2, rows * 2))
         axes = axes.flatten()
 
-        # ADDITION: Bug fix: check if feature map is 4D (batch, height, width, channels)
+        # Bug fix: check if feature map is 4D (batch, height, width, channels)
         if len(fmap.shape) == 4:
             fmap = fmap[0]  # Remove batch dimension if present
 

@@ -23,15 +23,16 @@ import math
 import csv
 
 # set the path for saving the output images and CSV file here:
-output_dir = 'CANS-REGMASK' # Dont change this!!
+output_dir = 'output_dir' # Keep the same for all batches
 
 csv_file = os.path.join(output_dir, 'angles.csv') # leave as angles.csv por favor
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
 def main():
-    input_directory = 'CANS-REGBATCH/batch_3'  # input images: put directory name of images here, ie, 'CANS-BATCH1' or whatever
+    input_directory = 'input_dir/batch_x'  # input images: put directory name of images here, ie, 'CANS-BATCH1' or whatever
     process_images_in_directory(input_directory, output_dir)
+    print(f"Completed processing directory {input_directory}")
 
 # Function to calculate the angle of a line segment
 def calculate_angle(p1, p2):

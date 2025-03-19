@@ -19,8 +19,8 @@ import sys
 
 # params to use if no arguments
 MODE = 'split'
-directory = './CANS-REGMASK2'  # input directory (or directory for rename)
-output_dir = './CANS-tempREGSPLIT'
+directory = './dir1'  # input directory (or directory for rename)
+output_dir = './dir2'
 
 # if args: let args control
 if len(sys.argv) > 1:
