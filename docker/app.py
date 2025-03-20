@@ -2,9 +2,10 @@
 Image masking program
 Written R. Tillman 1.28.25
 
-Updated 3.11.2025 for web app via docker
+Updated 3.11.2025 for web app via docker. 
+Requires a cloud storage device mounted at /persistent on the cloud vm.
 
-See ManImageMask for a simpler version that does the same thing locally
+Based on ManImageMask.py, but improved
 
 Copyright (c) 2025 Tillman. All Rights Reserved.
 '''
@@ -20,8 +21,8 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, s
 app = Flask(__name__)
 
 # Directories for input images, output images, and CSV file
-INPUT_DIR = 'images'
-OUTPUT_DIR = '/persistent/CANS-REGMASK2' # changed to match better azure FS structure
+INPUT_DIR = '/persistent/images'
+OUTPUT_DIR = '/persistent/CANS-REGMASK2'
 CSV_FILE = os.path.join(OUTPUT_DIR, 'angles.csv')
 
 if not os.path.exists(OUTPUT_DIR):
