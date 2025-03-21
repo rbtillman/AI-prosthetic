@@ -25,4 +25,5 @@ CANS-*/
 *.csv
 *.jpg
 *.jpeg
+*.npy
 
