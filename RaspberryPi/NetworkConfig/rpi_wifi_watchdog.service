@@ -1,0 +1,8 @@
+[Unit]
+Description=Raspberry Pi Wi-Fi Watchdog (Hotspot + Fallback)
+After=network.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rpi_wifi_watchdog.sh
