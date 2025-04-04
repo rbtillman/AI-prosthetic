@@ -280,11 +280,11 @@ class Command:
         u_lat = b * error / (lam + a**2 + b**2)
 
         # Update wrist commands
-        self.wrist[0] += u_rot
-        self.wrist[1] += u_lat
+        self.wrist_rotation[0] += u_rot
+        self.wrist_rotation[1] += u_lat
 
-        self.wrist[0] = np.clip(self.wrist_rotation[0], self.min_wrist_rotation[0], self.max_wrist_rotation[0])
-        self.wrist[1] = np.clip(self.wrist_rotation[1], self.min_wrist_rotation[1], self.max_wrist_rotation[1])
+        self.wrist_rotation[0] = np.clip(self.wrist_rotation[0], self.min_wrist_rotation[0], self.max_wrist_rotation[0])
+        self.wrist_rotation[1] = np.clip(self.wrist_rotation[1], self.min_wrist_rotation[1], self.max_wrist_rotation[1])
 
     def wrist_align_1D(self,angle):
         """
@@ -292,9 +292,9 @@ class Command:
         """
         error = 0 - angle
 
-        adjustment = self.wrist_Kp * error
+        adjustment = self.wrist_gains[1] * error
         self.wrist_rotation += adjustment
-        self.wrist_rotation = np.clip(self.wrist_rotation, -180, 180)
+        self.wrist_rotation = np.clip(self.wrist_rotation[1], self.min_wrist_rotation[1], self.max_wrist_rotation[1])
         self.verb and print(f"Command: Wrist angle = {angle:.2f} | Error = {error:.2f} | New Wrist Pos = {self.wrist_rotation:.2f}")
 
 
@@ -313,26 +313,26 @@ class Command:
 
         Returns list to send via serialWrite.
         """
-        return list(self.finger_positions) + list(self.wrist_rotation), [self.thumb_rotation]
+        return list(self.finger_positions) + list(self.wrist_rotation) + [self.thumb_rotation]
 
     def flip(self):
-        pose = 100 - [20, 20, 100, 20, 20]
+        pose = 100 - np.array([20, 20, 100, 20, 20])
         self.wrist_rotation = np.array([0,0,0])
         self.manual_finger(pose)
 
     def fist(self):
-        pose = 100 - [0, 0, 0, 0, 0]
+        pose = 100 - np.array([0, 0, 0, 0, 0])
         self.wrist_rotation = np.array([0,0,0])
         self.manual_finger(pose)
 
     def point(self):
-        pose = 100 - [20, 100, 20, 20, 20]
+        pose = 100 - np.array([20, 100, 20, 20, 20])
         self.wrist_rotation = np.array([0,0,0])
         self.manual_finger(pose)
 
     def reset(self):
         """Sets the hand command to the home position"""
-        pose = [0, 0, 0, 0, 0]
+        pose = np.array([0, 0, 0, 0, 0])
         self.wrist_rotation = np.array([0,0,0])
         self.thumb_rotation = 0
         self.manual_finger(pose)
@@ -357,7 +357,7 @@ def main():
 
     # initialize release variable.  need to implement release method
     release = False
-
+    grip = False
     # Initialize serial objects
     portenta = serOpen(port_port, baud_rate)
     nano = serOpen(nano_port, baud_rate)
