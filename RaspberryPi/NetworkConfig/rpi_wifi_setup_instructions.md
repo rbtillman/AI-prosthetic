@@ -1,9 +1,13 @@
-# Raspberry Pi Hotspot & Wi-Fi Fallback Setup Guide
+# Raspberry Pi Wi-Fi and SSH Setup Guide
 
 ---
 
 ## Objective
 Set up a Raspberry Pi to automatically connect to a primary Wi-Fi hotspot (e.g., Windows Mobile Hotspot), fall back to a secondary Wi-Fi network if needed, and self-heal using a watchdog script. Logs are stored in `/boot` for easy access. SSH is used for remote access and should be configured in rPi imager during OS setup.
+
+Additionally, modify settings for SSH terminal connection. The Pi imager can auto-setup SSH, but a few tips and tricks make the workflow a little smoother.  
+
+These instructions are written for the next team, and I am trying to assume no prior knowlege of the rPi, linux OS, or whatever. 
 
 ## Notes:
 Reccomend to use a windows mobile hotspot as the primary network for CMA project team. Campus wifi authentication method is a pain.  This makes the process simpler.  
@@ -121,3 +125,22 @@ nmcli -t -f active,ssid dev wifi
 ## Optional Enhancements
 - Rotate or archive logs to prevent boot partition overflow
 
+## SSH stuff
+### From Windows powershell: 
+After the pi is setup to connect to your hotspot (or whatever network), you can access it via SSH with:
+
+```bash
+ssh user@raspberrypi.local
+```
+Replace "user" with a username configured on the pi. It may default to pi. I reccomend setting up a user and password from the pi imager before installing the OS
+
+If not connected to the windows hotspot and is on some other network, this may still work, but you also might need the IP, which can be found by logging into the router. 
+If this doesnt work while using the hotspot, go to the mobile hotspot page in windows settings and make sure it is connected, and it will list it's IP there.  
+
+Then, access it with:
+```bash
+ssh user@192.137.420.69
+```
+(replace the IP with the assigned IP)
+
+This should work from within WSL also if you prefer to do it that way. 
