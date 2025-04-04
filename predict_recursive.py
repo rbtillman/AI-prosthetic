@@ -4,13 +4,13 @@ predicts angle for multiple images using some model and saves to csv.
 Usage: python predict_recursive.py <model_path> <images_dir> <labels_csv> [<output_csv>]
 
 Written R. Tillman 3.19.2025
+Copyright (c) 2025 Tillman. All Rights Reserved.
 """
 import os
 import sys
 import csv
 import tensorflow as tf
 from feature_map import predict
-
 
 def AutoPredict(model, images_dir, labels_csv_path, output_csv, verbose=False):
     """
@@ -59,7 +59,7 @@ def main():
     model = tf.keras.models.load_model(model_path)
     print("MAIN: Model loaded successfully.")
     
-    AutoPredict(model, images_dir, labels_csv, output_csv)
+    AutoPredict(model, images_dir, labels_csv, output_csv, True)
     print("MAIN: Prediction errors saved to", output_csv)
 
 if __name__ == "__main__":
