@@ -5,6 +5,8 @@ Written R. Tillman 3.18.2025
 WIP- will need to integrate into Pi, maybe swap to tflite, etc
 
 Should have enough error handling to run with no inputs for testing, if modifying, please keep this up.
+Note that running with serial devices not connected may slow srcipt down significantly.
+
 
 Copyright (c) 2025 Tillman. All Rights Reserved.
 '''
@@ -14,6 +16,7 @@ import os
 import time
 import numpy as np
 import tensorflow as tf
+import serial.tools.list_ports
 
 VERBOSE = True
 
@@ -29,25 +32,46 @@ def parseFeatureVector(data_line):
     except Exception as e:
         VERBOSE and print("parseFeatureVector: Error parsing feature vector:", e)
         return None
+    
+def getImage(data_line, shape):
+    try:
+        # Decode the JPEG image into a grayscale tensor.
+        img = tf.io.decode_jpeg(data_line, channels=1)
+    except Exception as e:
+        print("ParseImage: Failed to decode image:", e)
+        return None
+    
+    img = tf.image.resize(img, (shape[0], shape[1])) / 255.0
 
-def serOpen(serial_port, baud_rate):
+    return img
+    
+
+def serOpen(serial_port, baud_rate, max_tries = 5):
     """
     Open the serial port at a specified baud rate.
     Returns the serial object.
     """
     ser = None
+    tries = 0
     while ser is None:
         try:
             ser = serial.Serial(serial_port, baud_rate, timeout=1)
             VERBOSE and print(f"SerOpen: Serial connected on {serial_port} at {baud_rate} baud.")
         except Exception as e:
             VERBOSE and print("SerOpen: Failed to open serial port:", e)
-            time.sleep(1)
+            time.sleep(0.1)
+
+        if tries >= max_tries:
+            print(f"SerOpen: Could not open {serial_port} at {baud_rate}, giving up.\n Double check OS port:")
+            ports = serial.tools.list_ports.comports()
+            for port in ports:
+                print(port.device, port.description)
+            return ser
     
-    time.sleep(2)
+    time.sleep(1)
     return ser
 
-def readSerial(ser, serial_port, baud_rate):
+def readSerial(ser, serial_port, baud_rate, decode = True):
     """
     Reads a data line from the serial port and handles communication errors.\n
     If an error occurs, attempts to reconnect and returns (updated ser, None).\n
@@ -55,7 +79,10 @@ def readSerial(ser, serial_port, baud_rate):
     """
     try:
         if ser.in_waiting:
-            data_line = ser.readline().decode('utf-8')
+            if decode:
+                data_line = ser.readline().decode('utf-8')
+            else:
+                data_line = ser.readline()
             return ser, data_line
     except (serial.SerialException, OSError) as se:
         VERBOSE and print("readSerial: Communication error:", se)
@@ -107,26 +134,25 @@ def writeSerial(ser, serial_port, baud_rate, data):
         return ser
     return ser
 
-def infer(model, data_line, expected_feature_shape):
+def infer(model, data, expected_feature_shape):
     """
-    Given a data line from ReadSerial, parses it and if valid,
-    performs inference with the given model.
+    Given a data performs inference with the given model.
 
     Returns the predicted angle (or 0 if invalid input).
     """
     angle = 0
-    if not data_line:
+    if not data:
         return angle
 
-    feature_vector = parseFeatureVector(data_line)
-    if feature_vector is None:
+    # feature_vector = parseFeatureVector(data)
+    if data is None:
         return angle
 
-    if feature_vector.shape[0] != expected_feature_shape[0]:
-        VERBOSE and print("INFER: Received feature vector of incorrect length:", feature_vector.shape)
+    if data.shape[0] != expected_feature_shape[0]:
+        VERBOSE and print("INFER: Received feature vector of incorrect shape:", data.shape)
         return angle
 
-    input_data = np.expand_dims(feature_vector, axis=0)
+    input_data = np.expand_dims(data, axis=0)
     prediction = model.predict(input_data)
     angle = prediction[0][0]  # Assumes a 1x1 output
     VERBOSE and print("INFER: Predicted angle: {:.2f} degrees".format(angle))
@@ -339,6 +365,11 @@ class Command:
 
 
 def main():
+    print("REGINF: COM ports available:\n")
+    ports = serial.tools.list_ports.comports()
+    for port in ports:
+        print(port.device, port.description)
+
     # Portenta USB port
     port_port = '/dev/ttyUSB0'
     # Nano USB port
@@ -349,7 +380,7 @@ def main():
     # Baud rate for all USB connections
     baud_rate = 115200
 
-    # Acceptable angle to grip:
+    # Acceptable measured angle error to grip:
     GRIP_THRESH = 5
 
     # need a distance sensor!!!
@@ -392,12 +423,13 @@ def main():
             release = False
         
         # Read portenta data and align wrist
-        portenta, data1 = readSerial(portenta, port_port, baud_rate)
+        portenta, data1 = readSerial(portenta, port_port, baud_rate, False)
         time1 = time.time()
 
         # If portenta data available and not already gripping, infer angle and align wrist
         if data1 and not grip:
-            angle = infer(model, data1, expected_feature_shape)
+            image = getImage(data1, expected_feature_shape)
+            angle = infer(model, image, expected_feature_shape)
             inferTime = time.time() - time1
             VERBOSE and print(f"REGINF LOOP: inference time {inferTime:.3f} seconds")
 
