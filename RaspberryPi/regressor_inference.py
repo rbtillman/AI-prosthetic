@@ -15,7 +15,9 @@ import serial
 import os
 import time
 import numpy as np
-import tensorflow as tf
+# import tensorflow as tf
+import cv2
+from tflite_runtime.interpreter import Interpreter
 import serial.tools.list_ports
 
 VERBOSE = True
@@ -33,18 +35,44 @@ def parseFeatureVector(data_line):
         VERBOSE and print("parseFeatureVector: Error parsing feature vector:", e)
         return None
     
-def getImage(data_line, shape):
-    try:
-        # Decode the JPEG image into a grayscale tensor.
-        img = tf.io.decode_jpeg(data_line, channels=1)
-    except Exception as e:
-        print("ParseImage: Failed to decode image:", e)
-        return None
+# def getImage(data_line, shape):
+#     try:
+#         # Decode the JPEG image into a grayscale tensor.
+#         img = tf.io.decode_jpeg(data_line, channels=1)
+#     except Exception as e:
+#         print("ParseImage: Failed to decode image:", e)
+#         return None
     
-    img = tf.image.resize(img, (shape[0], shape[1])) / 255.0
+#     img = tf.image.resize(img, (shape[0], shape[1])) / 255.0
 
-    return img
-    
+#     return img
+
+def getImage(data_line: bytes, shape: tuple) -> np.ndarray | None:
+    """
+    Decode a JPEG byte stream into a normalized grayscale image.
+
+    Parameters:
+      data_line: raw JPEG bytes
+      shape: (height, width) target size
+
+    Returns:
+      2D float32 array of shape (height, width) with values in [0,1],
+      or None on failure.
+    """
+    # Convert raw bytes to a 1D uint8 array
+    buf = np.frombuffer(data_line, dtype=np.uint8)
+    # Decode JPEG to grayscale image
+    img = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        print("getImage: Failed to decode JPEG")
+        return None
+
+    # Resize: cv2.resize expects (width, height)
+    h, w = shape
+    resized = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    # Normalize to [0,1] float32
+    return (resized.astype(np.float32) / 255.0)
 
 def serOpen(serial_port, baud_rate, max_tries = 5):
     """
@@ -134,7 +162,7 @@ def writeSerial(ser, serial_port, baud_rate, data):
         return ser
     return ser
 
-def infer(model, data, expected_feature_shape):
+def inferOld(model, data, expected_feature_shape):
     """
     Given a data performs inference with the given model.
 
@@ -156,6 +184,43 @@ def infer(model, data, expected_feature_shape):
     prediction = model.predict(input_data)
     angle = prediction[0][0]  # Assumes a 1x1 output
     VERBOSE and print("INFER: Predicted angle: {:.2f} degrees".format(angle))
+    return angle
+
+def infer_tflite(interpreter, data, expected_shape):
+    """
+    Runs inference on `data` using a TFLite Interpreter.
+    Fixed from infer() for pi arm arch compatibility
+    
+    Parameters:
+      interpreter: initialized tflite_runtime.interpreter.Interpreter
+      data: NumPy array of shape expected_shape (e.g. image or feature vector)
+      expected_shape: tuple describing data.shape, e.g. (96,96,1) or (N,)
+    
+    Returns:
+      angle (float) or 0 on error
+    """
+    if data is None:
+        return 0.0
+
+    if data.shape != expected_shape:
+        VERBOSE and print(f"INFER: Received data of incorrect shape: {data.shape}, expected {expected_shape}")
+        return 0.0
+
+    input_details  = interpreter.get_input_details()[0]
+    output_details = interpreter.get_output_details()[0]
+
+    # Prepare input tensor
+    input_data = np.expand_dims(data, axis=0).astype(input_details[0]['dtype'])
+    interpreter.set_tensor(input_details[0]['index'], input_data)
+
+    # Run inference
+    interpreter.invoke()
+
+    # Read output tensor
+    output_data = interpreter.get_tensor(output_details[0]['index'])
+    angle = float(output_data[0][0])
+
+    VERBOSE and print(f"INFER: Predicted angle: {angle:.2f} degrees")
     return angle
 
 class Command:
@@ -404,14 +469,21 @@ def main():
     cmd = Command(fingers, sensors, VERBOSE)
 
     # Load the model
-    model = tf.keras.models.load_model("regressor.keras")
-    VERBOSE and print("REGINF: Model loaded successfully.")
-    model.summary()
+
+    interpreter = Interpreter(model_path="best_model.tflite")
+    interpreter.allocate_tensors()
+    _input_details  = interpreter.get_input_details()
+    _output_details = interpreter.get_output_details()
+
+
+    # model = tf.keras.models.load_model("regressor.keras")
+    # VERBOSE and print("REGINF: Model loaded successfully.")
+    # model.summary()
 
     # Expected feature vector shape (excluding batch dimension)
-    expected_feature_shape = model.input_shape[1:]
-    VERBOSE and print("REGINF: Expected feature vector shape:", expected_feature_shape)
-    VERBOSE and print("REGINF: Listening for feature vectors on serial port:", port_port)
+    # expected_feature_shape = model.input_shape[1:]
+    # VERBOSE and print("REGINF: Expected feature vector shape:", expected_feature_shape)
+    # VERBOSE and print("REGINF: Listening for feature vectors on serial port:", port_port)
 
     # MAIN LOOP
     while True:
@@ -428,8 +500,9 @@ def main():
 
         # If portenta data available and not already gripping, infer angle and align wrist
         if data1 and not grip:
-            image = getImage(data1, expected_feature_shape)
-            angle = infer(model, image, expected_feature_shape)
+            image = getImage(data1, (96,96))
+            # angle = infer(model, image, expected_feature_shape)
+            angle = infer_tflite(interpreter, image, (96,96,1))
             inferTime = time.time() - time1
             VERBOSE and print(f"REGINF LOOP: inference time {inferTime:.3f} seconds")
 
