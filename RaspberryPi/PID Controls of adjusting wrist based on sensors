@@ -1,0 +1,92 @@
+import time
+import serial
+import random  # For simulated sensor data
+
+# === Serial Setup ===
+arduino = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)  # Change port as needed
+time.sleep(2)  # Let Arduino reset
+
+# === PID Parameters ===
+Kp = 0.6
+Ki = 0.05
+Kd = 0.1
+
+wrist_angle = 90
+integral = 0
+last_error = 0
+last_time = time.time()
+
+# === Threshold Behavior Control ===
+trigger_threshold = 1.0
+active_response = False
+trigger_time = 0
+reversed_direction = False
+
+# === Neutral Angles for All Servos ===
+finger_angles = [90] * 5
+flex_angle = 90
+pitch_placeholder = 0
+thumb_angle = 90
+
+def get_sensor_average():
+    """Simulate average of 4 sensor readings. Replace with real input."""
+    return random.uniform(-0.5, 2.5)
+
+def pid_adjust(error):
+    global integral, last_error, last_time, wrist_angle
+
+    current_time = time.time()
+    delta_time = current_time - last_time if current_time != last_time else 1e-16
+
+    integral += error * delta_time
+    derivative = (error - last_error) / delta_time
+
+    output = Kp * error + Ki * integral + Kd * derivative
+
+    wrist_angle += output
+    wrist_angle = max(0, min(180, wrist_angle))
+
+    last_error = error
+    last_time = current_time
+
+    return int(wrist_angle)
+
+def release_fingers_slightly():
+    return [max(0, angle - 5) for angle in finger_angles]
+
+while True:
+    avg = get_sensor_average()
+
+    if avg > trigger_threshold:
+        if not active_response:
+            active_response = True
+            trigger_time = time.time()
+            reversed_direction = False
+
+        finger_angles = release_fingers_slightly()
+
+        if not reversed_direction and (time.time() - trigger_time) > 0.5:
+            reversed_direction = True
+
+        error = -avg if reversed_direction else avg
+        wrist_angle = pid_adjust(error)
+
+    else:
+        # Return to neutral
+        active_response = False
+        reversed_direction = False
+        integral = 0
+        last_error = 0
+        last_time = time.time()
+        wrist_angle = 90
+        finger_angles = [90] * 5
+
+    # Send command string
+    command = ','.join(str(int(a)) for a in (
+        *finger_angles, wrist_angle, flex_angle, pitch_placeholder, thumb_angle
+    )) + '\n'
+
+    arduino.write(command.encode('utf-8'))
+    print(f"Sent: {command.strip()} | Sensor Avg: {avg:.2f} | Wrist: {wrist_angle:.1f}")
+
+    time.sleep(0.05)
