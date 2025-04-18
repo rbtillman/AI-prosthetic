@@ -1,4 +1,5 @@
 # Untitled - By: rtill - Tue Apr 15 2025
+# Copyright (c) R. Tillman 2025
 
 import sensor, image, time, pyb, struct
 

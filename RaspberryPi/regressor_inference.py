@@ -20,13 +20,48 @@ import cv2
 # from tflite_runtime.interpreter import Interpreter
 import serial.tools.list_ports
 import struct
+from flask import Flask, Response, jsonify
+import threading
+from image_regression import LocalContrastLayer
 
 VERBOSE = True
+
+
+# Data access api
+app = Flask(__name__)
+
+# updates in main loop
+latest_frame_jpeg = None      # bytes
+latest_prediction = None      # float
+
+@app.route('/image.jpg')
+def image_jpg():
+    global latest_frame_jpeg
+    if latest_frame_jpeg is None:
+        return ('', 204)
+    return Response(latest_frame_jpeg, mimetype='image/jpeg')
+
+@app.route('/prediction')
+def prediction():
+    global latest_prediction
+    print("Serving prediction:", latest_prediction)
+    return jsonify(prediction=None if latest_prediction is None else float(latest_prediction))
+
+def start_http_server():
+    # disable reloader when running in thread
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+
+# start Flask in background
+threading.Thread(target=start_http_server, daemon=True).start()
+# end of api
+
 
 def parseFeatureVector(data_line):
     """
     Parses a comma-separated string of numbers into a numpy array.
     Returns a numpy feature array of type np.float32, or None if errors occur.
+
+    For partitioned models, currently unused.  
     """
     try:
         parts = data_line.strip().split(',')
@@ -36,17 +71,6 @@ def parseFeatureVector(data_line):
         VERBOSE and print("parseFeatureVector: Error parsing feature vector:", e)
         return None
     
-# def getImage(data_line, shape):
-#     try:
-#         # Decode the JPEG image into a grayscale tensor.
-#         img = tf.io.decode_jpeg(data_line, channels=1)
-#     except Exception as e:
-#         print("ParseImage: Failed to decode image:", e)
-#         return None
-    
-#     img = tf.image.resize(img, (shape[0], shape[1])) / 255.0
-
-#     return img
 
 def getImage(data_line: bytes, shape: tuple) -> np.ndarray | None:
     """
@@ -60,7 +84,7 @@ def getImage(data_line: bytes, shape: tuple) -> np.ndarray | None:
       2D float32 array of shape (height, width) with values in [0,1],
       or None on failure.
     """
-    VERBOSE and print("Attempting to read image")
+    VERBOSE and print("getImage: Attempting to read image")
     # Convert raw bytes to a 1D uint8 array
     buf = np.frombuffer(data_line, dtype=np.uint8)
     # Decode JPEG to grayscale image
@@ -117,6 +141,9 @@ def serOpen(serial_port, baud_rate, max_tries = 5):
     return ser
 
 def readFrame(ser):
+    """
+    Reads a jpeg data frame from a serial device.  
+    """
     VERBOSE and print("readFrame: attempting to read frame")
     # read the 4‑byte length header
     hdr = ser.read(4)
@@ -494,6 +521,9 @@ class Command:
 
 
 def main():
+    global latest_frame_jpeg
+    global latest_prediction
+    
     print("REGINF: COM ports available:\n")
     ports = serial.tools.list_ports.comports()
     for port in ports:
@@ -533,6 +563,9 @@ def main():
     # initialize release variable.  need to implement release method
     release = False
     grip = False
+
+
+    angle = 0
     # Initialize serial objects
     portenta = serOpen(port_port, baud_rate)
     # nano = serOpen(nano_port, baud_rate)
@@ -567,6 +600,7 @@ def main():
 
     # MAIN LOOP
     while True:
+
         start = time.time()
 
         # if released last cycle, wait, then reset release var
@@ -587,6 +621,7 @@ def main():
         if data1 and not grip:
             image = getImage(data1, (96,96))
             angle = infer(model, image, expected_feature_shape)
+            
             # angle = infer_tflite(interpreter, image, (96,96,1))
             inferTime = time.time() - time1
             VERBOSE and print(f"REGINF LOOP: inference time {inferTime:.3f} seconds")
@@ -596,6 +631,10 @@ def main():
             else:
                 cmd.wrist_align(angle)
         
+        # for flask app
+        latest_frame_jpeg = data1
+        latest_prediction = angle
+
         # Read pyb data, then grip if ready
         # pyb, data2 = readSerial(pyb, pyb_port, baud_rate)
 

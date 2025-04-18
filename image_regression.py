@@ -23,7 +23,7 @@ import keras
 import csv
 from tensorflow.keras import Model, Sequential, layers, activations
 from tensorflow.keras.regularizers import l1, l2, l1_l2
-from tensorflow.keras.optimizers import Adam, Lamb, Lion
+from tensorflow.keras.optimizers import Adam, Lamb, Lion, SGD, Ftrl
 from tensorflow.keras.losses import MeanSquaredError, MeanAbsoluteError, Huber, CosineSimilarity, LogCosh
 from tensorflow.keras.callbacks import ModelCheckpoint
 
@@ -31,34 +31,42 @@ try:
     # import feature map script if present
     from feature_map import feature_map
     visualize = True
-    if visualize:
-        print("Feature map script available.  See code to use automatically followinf training\n")
+    print("Feature map script available.  See code to use automatically following training\n")
 except:
     print("No feature map script found.\n")
     visualize = False
+
+try:
+    from predict_recursive import AutoPredict
+    predictdirs = True
+    print("AutoPredict available.  See code to use automatically following training\n")
+except:
+    print("No AutoPredict function available.\n")
+    predictdirs = False
 
 load_time = time.time() - start_time
 print(f"\nLibraries imported in {load_time:.2f} seconds.\n")
 
 ## CONSTANTS
-INPUT_SHAPE = (240, 240, 1) # most done w/ 96,96,1
+INPUT_SHAPE = (96, 96, 1) # most done w/ 96,96,1
 BATCH_SIZE = 64 # change based on available gpu memory, increased may help stabilize gradients
-EPOCHS = 30
-FINE_TUNE_EPOCHS = 10
+EPOCHS = 60
+FINE_TUNE_EPOCHS = 0
 FINE_TUNE_PERCENTAGE = 65
 
 # Paths to stuff
-PARENT_DIR = './CANS-ALLALLSPLIT'
-LEARNING_RATE = 4e-4 # started w 4e-4
+PARENT_DIR = './CANS-AZFULLSPLIT'
+LEARNING_RATE = 1e-3 # started w 4e-4
 
 # Learning rate modifiers
 CYCLICAL = False # Enable/disable cyclical learning rate (priority 1)
-CYC_MODE = 'triangular2' # triangular, triangular2, or 
+CYC_MODE = 'triangular' # triangular, triangular2, or 
 
 SCHEDULE = False # Enable/disable schedule (priority 2, will not run if CYCLICAL == True)
 # else: reduceLRonPlateau
 
 VISUALIZE_FM = False # Change this if you want to run a feature map following training
+AUTOPREDICT = False # Change this if you want to run AutoPredict on train and test data
 
 RANDOM_SEED = 42 # Ensures reprocucability during training
 
@@ -192,7 +200,7 @@ def save_model_info(model, history, lr, epochs, metrics_csv_filename = 'metrics_
     print(f"Model information saved to {metrics_csv_filename} and {summary_csv_filename}")
 
 # Define a local contrast layer
-@tf.keras.utils.register_keras_serializable() # ensures this layer doesnt give issues upon model reload
+@tf.keras.utils.register_keras_serializable(package="Custom", name="LocalContrastLayer") # ensures this layer doesnt give issues upon model reload
 class LocalContrastLayer(layers.Layer):
     def __init__(self, clipLimit=2.0, tileGridSize=(8, 8), epsilon=1e-5, **kwargs):
         super(LocalContrastLayer, self).__init__(**kwargs)
@@ -313,10 +321,9 @@ class ConstantFilters:
             "wtf": wtf_layer
         }
 
-# CHANGE: Move building model to functions for model partitioning
 # Define the feature extractor model
 def build_extractor(input_shape):
-    inputs = keras.Input(shape=input_shape, name='image_input')
+    inputs = keras.Input(shape=input_shape, name='ext_image_input')
 
     filters = ConstantFilters()
     filter_layers = filters.get_layers()
@@ -326,24 +333,27 @@ def build_extractor(input_shape):
     edge = filter_layers["laplacian"](inputs)
     # gabor = filter_layers["gabor"](inputs)
     # wtf = filter_layers["wtf"](inputs)
-    LCL = LocalContrastLayer(tileGridSize=(16, 16))(inputs) # 8,8 for 96x96
-
+    LCL = LocalContrastLayer(tileGridSize=(8, 8))(inputs) # 8,8 for 96x96
+    
     # Base CNN block
     x = layers.AutoContrast(value_range=(0,1))(inputs)
-
+    
     x = layers.Concatenate()([x, conv_x, conv_y, edge, LCL])
-    x = layers.AveragePooling2D((4,4))(x)
-
-    x = layers.Conv2D(64, (5, 5), kernel_initializer="he_normal", padding='same')(x) #5,5 works good on 96x96
+    
+    x = layers.Conv2D(8, (5, 5), kernel_initializer="he_normal", padding='same')(x) #5,5 works good on 96x96, 32 similar perf to 64 (slightly better)
     x = layers.ReLU(negative_slope=0.1)(x)
+    x = layers.MaxPooling2D(2,2)(x)
+
+    x = layers.Conv2D(16, (2,3), kernel_initializer="orthogonal")(x) #from 32, randnormal, 3,3
+    x = layers.ReLU(negative_slope=0.2)(x)
     # x = layers.SpatialDropout2D(0.2)(x)
-    # x = layers.MaxPooling2D((2, 2))(x)
-
-    x = layers.Conv2D(32, (3, 3), kernel_initializer="he_normal", padding='same')(x)
-    x = layers.ReLU(negative_slope=0.1)(x)
     x = layers.MaxPooling2D((2, 2))(x)
 
-    x = layers.Conv2D(128, (3, 3), padding='same')(x)
+    x = layers.Conv2D(32, (3, 3), kernel_initializer="he_normal", padding='same')(x) #from 32
+    x = layers.ReLU(negative_slope=0.05)(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    
+    x = layers.Conv2D(64, (3, 3), kernel_initializer="he_normal", padding='same')(x)#from 64
     x = layers.ReLU(negative_slope=0.1)(x)
     x = layers.MaxPooling2D((2, 2))(x)
     
@@ -356,18 +366,54 @@ def build_extractor(input_shape):
 def build_regressor(input_shape):
     feature_input = keras.Input(shape=input_shape, name='feature_input')
 
-    y = layers.Dense(128, kernel_regularizer=l2(0.001))(feature_input)
+    y = layers.Dense(64, kernel_regularizer=l2(0.001))(feature_input)
     y = layers.ReLU(negative_slope=0.1)(y)
-    y = layers.Dropout(0.4)(y)
+    y = layers.Dropout(0.2)(y)
 
     outputs = layers.Dense(1, activation='linear')(y)
 
     regressor = Model(feature_input, outputs, name='regressor')
     return regressor
 
+# CHANGE: moved to function, previously in main()
+# Define optimizer params and callbacks
+def optimizerParams(LEARNING_RATE, CYCLICAL=False, SCHEDULE=False, CYC_MODE="triangular"):
+    if CYCLICAL:
+        optimizer = Lion(learning_rate=LEARNING_RATE, use_ema = True)
+        print('optimizerParams: LR adjustment: cyclical')
+        callbacks = [
+            ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min'),
+            CyclicalLR(base_lr=1e-5, max_lr=6e-4, step_size=2000, mode=CYC_MODE)
+        ]
+        # using different callbacks for fine-tune
+        callbacksFT = [
+            ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min')
+        ]
+    elif SCHEDULE:
+        lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+            LEARNING_RATE,
+            decay_steps = 200,  # Adjust based on dataset size
+            decay_rate=0.96,  # Adjust the rate of decay
+            staircase=True  # stepwise decay
+            )
+        optimizer = Lion(learning_rate=lr_schedule)
+        print('optimizerParams: LR adjustment: Schedule')
+        callbacks = [
+            ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min')
+        ]
+        callbacksFT = callbacks
+    else:
+        optimizer = Lion(learning_rate=LEARNING_RATE, use_ema = True)
+        print('optimizerParams: LR adjustment: Reduce on Plateau')
+        callbacks = [
+            ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min'),
+            tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6)
+        ]
+        callbacksFT = callbacks
+
+    return optimizer, callbacks, callbacksFT
 
 def main():
-    # CHANGE: Moved these function into main() as optimization when importing from this script
     # Load CSV, create a filename-to-angle dictionary
     labels_df = pd.read_csv(labels_csv, header=0, names=['filename', 'angle'])
     label_dict = {row['filename']: row['angle'] for _, row in labels_df.iterrows()}
@@ -396,21 +442,11 @@ def main():
         dataset = dataset.map(process_path).batch(batch_size)
         return dataset
 
-
-    if SCHEDULE:
-        lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-            LEARNING_RATE,
-            decay_steps = 200,  # Adjust based on dataset size
-            decay_rate=0.96,  # Adjust the rate of decay
-            staircase=True  # stepwise decay
-        )
-
     train_dataset = load_dataset(train_dir, BATCH_SIZE)
     validation_dataset = load_dataset(validation_dir, BATCH_SIZE)
 
 
     ## MODEL STRUCTURE:
-    # CHANGE: add model partitoning
     extractor = build_extractor(INPUT_SHAPE)
     regressor = build_regressor(extractor.output_shape[1:])
 
@@ -425,65 +461,47 @@ def main():
     regressor.summary()
     ## END MODEL STRUCTURE
 
-    # Callbacks and pass LR to optimizer
-    if CYCLICAL:
-        optimizer = Lion(learning_rate=LEARNING_RATE)
-        print('LR adjustment: cyclical')
-        callbacks = [
-            ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min'),
-            CyclicalLR(base_lr=1e-5, max_lr=6e-4, step_size=2000, mode=CYC_MODE)
-        ]
-        # using different callbacks for fine-tune
-        callbacksFT = [
-            ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min')
-        ]
-    elif SCHEDULE:
-        optimizer = Lion(learning_rate=lr_schedule)
-        print('LR adjustment: Schedule')
-        callbacks = [
-            ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min')
-        ]
-        callbacksFT = callbacks
-    else:
-        optimizer = Lion(learning_rate=LEARNING_RATE)
-        print('LR adjustment: Reduce on Plateau')
-        callbacks = [
-            ModelCheckpoint('best_model.keras', save_best_only=True, monitor='val_loss', mode='min'),
-            tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6)
-        ]
-        callbacksFT = callbacks
+    optimizer, callbacks, callbacksFT = optimizerParams(LEARNING_RATE, CYCLICAL=CYCLICAL, SCHEDULE=SCHEDULE)
 
     # Compile the model with the selected optimizer
     model.compile(optimizer=optimizer,
-                loss=LogCosh(),
+                loss=Huber(),
                 metrics=['mae'])
 
     # Train the model
-    print("Training the model...")
+    print("MAIN: Training the model...")
     trainhist = model.fit(train_dataset, validation_data=validation_dataset, epochs=EPOCHS, verbose=2, callbacks=callbacks)
+    print("MAIN: Model training completed successfully.")
 
     # Fine-tuning
-    print(f'Fine-tuning the model for {FINE_TUNE_EPOCHS} epochs...')
-    model = tf.keras.models.load_model('best_model.keras')
+    if not (FINE_TUNE_EPOCHS == 0):
+        print(f'MAIN: Fine-tuning the model for {FINE_TUNE_EPOCHS} epochs...')
+        model = tf.keras.models.load_model('best_model.keras')
 
-    # Recompile for fine-tuning
-    model.compile(optimizer=Lion(learning_rate=0.000045),
-                loss= Huber(),
-                metrics=['mae'])
+        # Recompile for fine-tuning
+        model.compile(optimizer=Lion(learning_rate=0.000045),
+                    loss= Huber(),
+                    metrics=['mae'])
 
-    # Continue training with fine-tuning
-    tunehist = model.fit(train_dataset, epochs=FINE_TUNE_EPOCHS, verbose=2, validation_data=validation_dataset, callbacks=callbacksFT)
-
-    print("Model training and fine-tuning completed successfully.")
-
+        # Continue training with fine-tuning
+        tunehist = model.fit(train_dataset, epochs=FINE_TUNE_EPOCHS, verbose=2, validation_data=validation_dataset, callbacks=callbacksFT)
+        save_model_info(model,tunehist,LEARNING_RATE,FINE_TUNE_EPOCHS,"tune_history.csv", "tune_models.csv")
+        print("MAIN: Model fine-tuning completed succesfully")
+    
+    # Run accesory programs if present and desired
     if visualize and VISUALIZE_FM:
         feature_map(model, './CANS-REGMASKSPLIT/TEST/coke00003.jpg')
+
+    if predictdirs and AUTOPREDICT:
+        AutoPredict(model,train_dir,labels_csv,"train_errs.csv")
+        AutoPredict(model,validation_dir,labels_csv,"test_errs.csv")
 
     extractor.save('extractor.keras')
     regressor.save('regressor.keras')
 
-    save_model_info(model,trainhist,LEARNING_RATE,EPOCHS)
-    save_model_info(model,tunehist,LEARNING_RATE,FINE_TUNE_EPOCHS,"tune_history.csv", "tune_models.csv")
+    model.export('best_model.tflite')
 
+    save_model_info(model,trainhist,LEARNING_RATE,EPOCHS)
+    
 if __name__ == "__main__":
     main()
