@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Live Stream Client</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; }
+    #image { border: 1px solid #ccc; width: 320px; height: 240px; }
+  </style>
+</head>
+<body>
+  <h1>Live Stream & Prediction</h1>
+  <img id="image" alt="Stream" />
+  <p>Prediction: <span id="prediction">--</span>°</p>
+  <script src="/config.js"></script>
+  <script>
+    const imgEl = document.getElementById('image');
+    const predEl = document.getElementById('prediction');
+    async function update() {
+      imgEl.src = `${window.API_URL}/image.jpg?` + Date.now();
+      try {
+        const res = await fetch(`${window.API_URL}/prediction`);
+        const data = await res.json();
+        predEl.innerText = data.prediction?.toFixed(2) ?? '--';
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    setInterval(update, 200);
+    update();
+  </script>
+</body>
+</html>
