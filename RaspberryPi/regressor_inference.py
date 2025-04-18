@@ -15,10 +15,11 @@ import serial
 import os
 import time
 import numpy as np
-# import tensorflow as tf
+import tensorflow as tf
 import cv2
-from tflite_runtime.interpreter import Interpreter
+# from tflite_runtime.interpreter import Interpreter
 import serial.tools.list_ports
+import struct
 
 VERBOSE = True
 
@@ -59,6 +60,7 @@ def getImage(data_line: bytes, shape: tuple) -> np.ndarray | None:
       2D float32 array of shape (height, width) with values in [0,1],
       or None on failure.
     """
+    VERBOSE and print("Attempting to read image")
     # Convert raw bytes to a 1D uint8 array
     buf = np.frombuffer(data_line, dtype=np.uint8)
     # Decode JPEG to grayscale image
@@ -70,9 +72,24 @@ def getImage(data_line: bytes, shape: tuple) -> np.ndarray | None:
     # Resize: cv2.resize expects (width, height)
     h, w = shape
     resized = cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
+    VERBOSE and print(f"getImage: Got image, resized to {shape}, ")
 
     # Normalize to [0,1] float32
     return (resized.astype(np.float32) / 255.0)
+
+def getImageRaw(data_line: bytes, shape: tuple) -> np.ndarray | None:
+    """
+    Decode raw grayscale pixels (no compression).
+    """
+    h, w = shape
+    expected = h * w
+    buf = np.frombuffer(data_line, dtype=np.uint8)
+    if buf.size != expected:
+        VERBOSE and print(f"getImage_raw: expected {expected} bytes, got {buf.size}")
+        return None
+    img = buf.reshape((h, w))
+    # Normalize to [0,1]
+    return img.astype(np.float32) / 255.0
 
 def serOpen(serial_port, baud_rate, max_tries = 5):
     """
@@ -99,18 +116,67 @@ def serOpen(serial_port, baud_rate, max_tries = 5):
     time.sleep(1)
     return ser
 
-def readSerial(ser, serial_port, baud_rate, decode = True):
+def readFrame(ser):
+    VERBOSE and print("readFrame: attempting to read frame")
+    # read the 4‑byte length header
+    hdr = ser.read(4)
+    if len(hdr) < 4:
+        return None
+    size = struct.unpack("<I", hdr)[0]
+    # then read exactly that many bytes
+    data = ser.read(size)
+    if len(data) < size:
+        return None
+    return data
+
+def readSerial(ser, serial_port, baud_rate, decode=True):
+    """
+    Reads one line (text or binary until newline) from the serial port.
+    Blocks up to ser.timeout seconds.  Returns (ser, data) or (ser, None).
+    """
+    VERBOSE and print("readSerial: blocking for next line…")
+    try:
+        if decode:
+            raw = ser.readline()
+            VERBOSE and print(f"readSerial, decode: got {len(data_line)} bytes")
+            if not raw:
+                return ser, None
+            data_line = raw.decode('utf-8', errors='ignore')
+        else:
+            data_line = ser.read_until(b'\n')
+            VERBOSE and print(f"readSerial: got {len(data_line)} bytes")
+            if not data_line:
+                return ser, None
+
+        return ser, data_line
+
+    except (serial.SerialException, OSError) as se:
+        VERBOSE and print("readSerial: Communication error:", se)
+        try: ser.close()
+        except: pass
+        VERBOSE and print("readSerial: Reconnecting…")
+        ser = serOpen(serial_port, baud_rate)
+        return ser, None
+
+    except Exception as e:
+        VERBOSE and print("readSerial: Unexpected error:", e)
+        time.sleep(0.1)
+        return ser, None
+
+def readSerial1(ser, serial_port, baud_rate, decode = True):
     """
     Reads a data line from the serial port and handles communication errors.\n
     If an error occurs, attempts to reconnect and returns (updated ser, None).\n
     Otherwise, returns (ser, data_line) if data is available or (ser, None) if not.
     """
+    VERBOSE and print("readSerial: beginning read")
     try:
         if ser.in_waiting:
             if decode:
                 data_line = ser.readline().decode('utf-8')
             else:
-                data_line = ser.readline()
+                data_line = ser.read_until(b'\n')  
+            VERBOSE and print(f"readSerial: Data line recieved:{data_line[:40]} ...")
             return ser, data_line
     except (serial.SerialException, OSError) as se:
         VERBOSE and print("readSerial: Communication error:", se)
@@ -162,15 +228,13 @@ def writeSerial(ser, serial_port, baud_rate, data):
         return ser
     return ser
 
-def inferOld(model, data, expected_feature_shape):
+def infer(model, data, expected_feature_shape):
     """
     Given a data performs inference with the given model.
 
     Returns the predicted angle (or 0 if invalid input).
     """
     angle = 0
-    if not data:
-        return angle
 
     # feature_vector = parseFeatureVector(data)
     if data is None:
@@ -435,8 +499,23 @@ def main():
     for port in ports:
         print(port.device, port.description)
 
-    # Portenta USB port
-    port_port = '/dev/ttyUSB0'
+    # Auto‑detect Portenta USB port
+    port_port = None
+    for p in serial.tools.list_ports.comports():
+        if "Portenta" in p.description:
+            port_port = p.device
+            break
+    if port_port is None:
+        # fallback to first available port (or handle error)
+        ports = serial.tools.list_ports.comports()
+        if ports:
+            port_port = ports[0].device
+            print(f"WARN: Portenta not found, defaulting to {port_port}")
+        else:
+            raise RuntimeError("No serial ports found")
+
+    VERBOSE and print(f"Using Portenta on {port_port}")
+
     # Nano USB port
     nano_port = '/dev/ttyUSB1' #acm0?
     # Pyboard port
@@ -456,8 +535,9 @@ def main():
     grip = False
     # Initialize serial objects
     portenta = serOpen(port_port, baud_rate)
-    nano = serOpen(nano_port, baud_rate)
-    pyb = serOpen(pyb_port, baud_rate)
+    # nano = serOpen(nano_port, baud_rate)
+    # pyb = serOpen(pyb_port, baud_rate)
+    time.sleep(1)
 
     # Initialize finger data
     fingers = 5 # n fingers
@@ -468,22 +548,22 @@ def main():
     # Create the command object for controls
     cmd = Command(fingers, sensors, VERBOSE)
 
-    # Load the model
+    # Load the model: TFLITE stuff
 
-    interpreter = Interpreter(model_path="best_model.tflite")
-    interpreter.allocate_tensors()
-    _input_details  = interpreter.get_input_details()
-    _output_details = interpreter.get_output_details()
+    # interpreter = Interpreter(model_path="best_model.tflite")
+    # interpreter.allocate_tensors()
+    # _input_details  = interpreter.get_input_details()
+    # _output_details = interpreter.get_output_details()
 
 
-    # model = tf.keras.models.load_model("regressor.keras")
-    # VERBOSE and print("REGINF: Model loaded successfully.")
-    # model.summary()
+    model = tf.keras.models.load_model("best_model.keras")
+    VERBOSE and print("REGINF: Model loaded successfully.")
+    model.summary()
 
     # Expected feature vector shape (excluding batch dimension)
-    # expected_feature_shape = model.input_shape[1:]
-    # VERBOSE and print("REGINF: Expected feature vector shape:", expected_feature_shape)
-    # VERBOSE and print("REGINF: Listening for feature vectors on serial port:", port_port)
+    expected_feature_shape = model.input_shape[1:]
+    VERBOSE and print("REGINF: Expected feature vector shape:", expected_feature_shape)
+    VERBOSE and print("REGINF: Listening for feature vectors on serial port:", port_port)
 
     # MAIN LOOP
     while True:
@@ -495,39 +575,47 @@ def main():
             release = False
         
         # Read portenta data and align wrist
-        portenta, data1 = readSerial(portenta, port_port, baud_rate, False)
+        # portenta, data1 = readSerial(portenta, port_port, baud_rate, False)
+        data1 = readFrame(portenta)
         time1 = time.time()
+
+        if data1 is None:
+            time.sleep(0.05)
+            print("REGINF LOOP: ERROR: data1 is None")
 
         # If portenta data available and not already gripping, infer angle and align wrist
         if data1 and not grip:
             image = getImage(data1, (96,96))
-            # angle = infer(model, image, expected_feature_shape)
-            angle = infer_tflite(interpreter, image, (96,96,1))
+            angle = infer(model, image, expected_feature_shape)
+            # angle = infer_tflite(interpreter, image, (96,96,1))
             inferTime = time.time() - time1
             VERBOSE and print(f"REGINF LOOP: inference time {inferTime:.3f} seconds")
 
-            if (angle < GRIP_THRESH) and True: # replace true w/ dist sensor and thresh
+            if (angle < GRIP_THRESH) and False: # replace true w/ dist sensor and thresh
                 grip = True
             else:
                 cmd.wrist_align(angle)
         
         # Read pyb data, then grip if ready
-        pyb, data2 = readSerial(pyb, pyb_port, baud_rate)
+        # pyb, data2 = readSerial(pyb, pyb_port, baud_rate)
 
-        if data2 and grip:
-            forceMatrix = cmd.get_force_matrix(data2)
-            cmd.finger_grip(forceMatrix)
+        # if data2 and grip:
+        #     forceMatrix = cmd.get_force_matrix(data2)
+        #     cmd.finger_grip(forceMatrix)
 
-        if release:
-            cmd.release_grip()
+        # if release:
+        #     cmd.release_grip()
 
         # Generate command packet, send to nano
         commands = cmd.get_command_packet()
-        nano = writeSerial(nano, nano_port, baud_rate, commands)
+        #nano = writeSerial(nano, nano_port, baud_rate, commands)
 
         end = time.time()
         elapsed = end - start
         VERBOSE and print(f"REGINF LOOP: Main loop time: {elapsed:.6f} seconds")
+
+        # For debugging!
+        time.sleep(0.1)
 
 if __name__ == "__main__":
     main()

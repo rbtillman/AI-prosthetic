@@ -1,6 +1,6 @@
 # Untitled - By: rtill - Tue Apr 15 2025
 
-import sensor, image, time, pyb
+import sensor, image, time, pyb, struct
 
 # Initialize the camera sensor.
 sensor.reset()
@@ -13,19 +13,25 @@ usb = pyb.USB_VCP()
 
 clock = time.clock()
 
+#while True:
+
+    #img = sensor.snapshot()
+
+    #print(img.to_ndarray("B"))
+    #jpeg = img.compress(quality=100)
+
 while True:
-    start = pyb.millis()
+    # Grab a frame
     img = sensor.snapshot()
-    # data = img
-    # data.to_ndarray("B")
-    data = img.compress(quality=50)
 
-    print("new thing\n")
+    # Compress to JPEG (quality 80–100 is fine for feature extraction)
+    jpeg = img.compress(quality=80)
 
-    usb.send(data)
+    # Prefix with 4‑byte little‑endian length
+    length = struct.pack("<I", len(jpeg))
 
-    end = pyb.millis()
+    # Send length + JPEG
+    usb.send(length + jpeg)
 
-    print("\n")
-    print("elapsed (ms)", end-start)
-    time.sleep(0.1)
+    # Throttle frame rate (optional)
+    time.sleep(0.05)
