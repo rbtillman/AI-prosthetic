@@ -1,0 +1,57 @@
+"""
+Model converter to TFlite from Keras.
+"""
+
+import tensorflow as tf
+import numpy as np
+import glob
+import os
+from image_regression import LocalContrastLayer
+
+# Change this to match your model's expected input shape
+INPUT_SHAPE = (96, 96, 1)
+
+
+def load_dataset(directory, batch_size):
+    file_paths = glob.glob(os.path.join(directory, "*.jpg"))
+    dataset = tf.data.Dataset.from_tensor_slices(file_paths)
+    
+    def process_path(file_path):
+        img = tf.io.read_file(file_path)
+        img = tf.image.decode_jpeg(img, channels=1)
+        img = tf.image.resize(img, (INPUT_SHAPE[0], INPUT_SHAPE[1])) / 255.0
+        return img, None
+
+    dataset = dataset.map(process_path).batch(batch_size)
+    return dataset
+
+def representative_data_gen():
+    dataset = load_dataset('./CANS-AZFULLSPLIT/train', 1)
+    for input_tensor, _ in dataset.take(100):
+        # input_tensor is a batch of 1 image with shape (1, height, width, channels)
+        yield [input_tensor.numpy().astype(np.float32)]
+
+
+# Load the Keras model
+model = tf.keras.models.load_model('best_model.keras', custom_objects={'LocalContrastLayer': LocalContrastLayer})
+
+# Create a TFLite converter from the model.
+converter = tf.lite.TFLiteConverter.from_keras_model(model)
+
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+converter.representative_dataset = representative_data_gen
+
+# Specify that we want full integer quantization—weights and activations.
+converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+
+# Optionally, if your hardware expects uint8 inputs, set inference input/output types as well:
+converter.inference_input_type = tf.uint8
+converter.inference_output_type = tf.uint8
+
+# Convert the model.
+tflite_model = converter.convert()
+
+# Save the quantized TFLite model.
+with open('best_model2.tflite', 'wb') as f:
+    f.write(tflite_model)
